@@ -3,3 +3,4 @@ using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("ClrSlate.Agents.Hosting.OpenAI")]
 [assembly: InternalsVisibleTo("ClrSlate.Agents.Hosting.OpenAI.UnitTests")]
+[assembly: InternalsVisibleTo("DynamicProxyGenAssembly2")]
