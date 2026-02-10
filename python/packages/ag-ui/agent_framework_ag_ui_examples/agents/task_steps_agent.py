@@ -2,6 +2,8 @@
 
 """Task steps agent demonstrating agentic generative UI (Feature 6)."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator
 from enum import Enum
@@ -18,7 +20,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallStartEvent,
 )
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
@@ -39,7 +41,7 @@ class TaskStep(BaseModel):
     status: StepStatus = Field(default=StepStatus.PENDING, description="The status of the step")
 
 
-@ai_function
+@tool
 def generate_task_steps(steps: list[TaskStep]) -> str:
     """Generate a list of task steps for completing a task.
 
@@ -128,7 +130,7 @@ class TaskStepsAgentWithExecution:
         """Delegate all other attribute access to base agent."""
         return getattr(self._base_agent, name)
 
-    async def run_agent(self, input_data: dict[str, Any]) -> AsyncGenerator[Any, None]:
+    async def run_agent(self, input_data: dict[str, Any]) -> AsyncGenerator[Any]:
         """Run the agent and then simulate step execution."""
         import logging
         import uuid
@@ -268,7 +270,7 @@ class TaskStepsAgentWithExecution:
 
                 # Stream completion
                 accumulated_text = ""
-                async for chunk in chat_client.get_streaming_response(messages=messages):
+                async for chunk in chat_client.get_response(messages=messages, stream=True):
                     # chunk is ChatResponseUpdate
                     if hasattr(chunk, "text") and chunk.text:
                         accumulated_text += chunk.text

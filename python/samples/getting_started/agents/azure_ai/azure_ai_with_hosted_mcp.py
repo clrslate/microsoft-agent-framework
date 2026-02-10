@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentProtocol, AgentResponse, AgentThread, ChatMessage, HostedMCPTool
+from agent_framework import AgentResponse, AgentThread, ChatMessage, HostedMCPTool, SupportsAgentRun
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -14,7 +14,7 @@ This sample demonstrates integrating hosted Model Context Protocol (MCP) tools w
 """
 
 
-async def handle_approvals_without_thread(query: str, agent: "AgentProtocol") -> AgentResponse:
+async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun") -> AgentResponse:
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
 
     result = await agent.run(query, store=False)
@@ -25,17 +25,17 @@ async def handle_approvals_without_thread(query: str, agent: "AgentProtocol") ->
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
             )
-            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+            new_inputs.append(ChatMessage("assistant", [user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+                ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         result = await agent.run(new_inputs, store=False)
     return result
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", thread: "AgentThread") -> AgentResponse:
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread") -> AgentResponse:
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
 
     result = await agent.run(query, thread=thread)
@@ -50,7 +50,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
             new_input.append(
                 ChatMessage(
                     role="user",
-                    contents=[user_input_needed.create_response(user_approval.lower() == "y")],
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
         result = await agent.run(new_input, thread=thread)

@@ -9,7 +9,6 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Executor,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowViz,
@@ -40,7 +39,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage(Role.USER, text=prompt)
+        initial_message = ChatMessage("user", text=prompt)
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 
@@ -124,13 +123,12 @@ async def main() -> None:
 
     # Build a simple fan-out/fan-in workflow
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="dispatcher")
         .register_agent(create_researcher_agent, name="researcher")
         .register_agent(create_marketer_agent, name="marketer")
         .register_agent(create_legal_agent, name="legal")
         .register_executor(lambda: DispatchToExperts(id="dispatcher"), name="dispatcher")
         .register_executor(lambda: AggregateInsights(id="aggregator"), name="aggregator")
-        .set_start_executor("dispatcher")
         .add_fan_out_edges("dispatcher", ["researcher", "marketer", "legal"])
         .add_fan_in_edges(["researcher", "marketer", "legal"], "aggregator")
         .build()

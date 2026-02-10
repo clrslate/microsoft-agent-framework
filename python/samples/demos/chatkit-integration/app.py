@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/demos/chatkit-integration/app.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """
@@ -18,7 +28,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -131,6 +141,8 @@ async def stream_widget(
     yield ThreadItemDoneEvent(type="thread.item.done", item=widget_item)
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -169,6 +181,7 @@ def get_weather(
     return WeatherResponse(text, weather_data)
 
 
+@tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
@@ -176,6 +189,7 @@ def get_time() -> str:
     return f"Current UTC time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
 
+@tool(approval_mode="never_require")
 def show_city_selector() -> str:
     """Show an interactive city selector widget to the user.
 
@@ -277,7 +291,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             title_prompt = [
                 ChatMessage(
-                    role=Role.USER,
+                    role="user",
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
                         f"that starts with:\n\n{conversation_context}\n\n"
@@ -328,7 +342,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
-        from agent_framework import FunctionResultContent
 
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
@@ -362,7 +375,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             logger.info(f"Running agent with {len(agent_messages)} message(s)")
 
             # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run_stream(agent_messages)
+            agent_stream = self.weather_agent.run(agent_messages, stream=True)
 
             # Create an intercepting stream that extracts function results while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
@@ -371,7 +384,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -454,12 +467,12 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
+            agent_messages = [ChatMessage(role="user", text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
             # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run_stream(agent_messages)
+            agent_stream = self.weather_agent.run(agent_messages, stream=True)
 
             # Create an intercepting stream that extracts function results while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
@@ -468,7 +481,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -559,7 +572,7 @@ async def chatkit_endpoint(request: Request):
 
 
 @app.post("/upload/{attachment_id}")
-async def upload_file(attachment_id: str, file: UploadFile = File(...)):
+async def upload_file(attachment_id: str, file: Annotated[UploadFile, File()]):
     """Handle file upload for two-phase upload.
 
     The client POSTs the file bytes here after creating the attachment
@@ -581,7 +594,7 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):
         attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
 
         # Clear the upload_url since upload is complete
-        attachment.upload_url = None
+        attachment.upload_url = None  # type: ignore[union-attr]
 
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})

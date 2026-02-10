@@ -2,6 +2,8 @@
 
 """Converter utilities for converting ChatKit thread items to Agent Framework messages."""
 
+from __future__ import annotations
+
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
@@ -9,7 +11,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from agent_framework import (
     ChatMessage,
     Content,
-    Role,
 )
 from chatkit.types import (
     AssistantMessageItem,
@@ -30,9 +31,9 @@ from chatkit.types import (
 )
 
 if sys.version_info >= (3, 11):
-    from typing import assert_never
+    from typing import assert_never  # type:ignore # pragma: no cover
 else:
-    from typing_extensions import assert_never
+    from typing_extensions import assert_never  # type:ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -101,20 +102,20 @@ class ThreadItemConverter:
 
         # If only text and no attachments, use text parameter for simplicity
         if text_content.strip() and not data_contents:
-            user_message = ChatMessage(role=Role.USER, text=text_content.strip())
+            user_message = ChatMessage(role="user", text=text_content.strip())
         else:
             # Build contents list with both text and attachments
             contents: list[Content] = []
             if text_content.strip():
                 contents.append(Content.from_text(text=text_content.strip()))
             contents.extend(data_contents)
-            user_message = ChatMessage(role=Role.USER, contents=contents)
+            user_message = ChatMessage(role="user", contents=contents)
 
         # Handle quoted text if this is the last message
         messages = [user_message]
         if item.quoted_text and is_last_message:
             quoted_context = ChatMessage(
-                role=Role.USER,
+                role="user",
                 text=f"The user is referring to this in particular:\n{item.quoted_text}",
             )
             # Prepend quoted context before the main message
@@ -214,7 +215,7 @@ class ThreadItemConverter:
                 message = converter.hidden_context_to_input(hidden_item)
                 # Returns: ChatMessage(role=SYSTEM, text="<HIDDEN_CONTEXT>User's email: ...</HIDDEN_CONTEXT>")
         """
-        return ChatMessage(role=Role.SYSTEM, text=f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>")
+        return ChatMessage(role="system", text=f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>")
 
     def tag_to_message_content(self, tag: UserMessageTagContent) -> Content:
         """Convert a ChatKit tag (@-mention) to Agent Framework content.
@@ -293,7 +294,7 @@ class ThreadItemConverter:
             f"A message was displayed to the user that the following task was performed:\n<Task>\n{task_text}\n</Task>"
         )
 
-        return ChatMessage(role=Role.USER, text=text)
+        return ChatMessage(role="user", text=text)
 
     def workflow_to_input(self, item: WorkflowItem) -> ChatMessage | list[ChatMessage] | None:
         """Convert a ChatKit WorkflowItem to Agent Framework ChatMessage(s).
@@ -348,7 +349,7 @@ class ThreadItemConverter:
                 f"<Task>\n{task_text}\n</Task>"
             )
 
-            messages.append(ChatMessage(role=Role.USER, text=text))
+            messages.append(ChatMessage(role="user", text=text))
 
         return messages if messages else None
 
@@ -390,7 +391,7 @@ class ThreadItemConverter:
         try:
             widget_json = item.widget.model_dump_json(exclude_unset=True, exclude_none=True)
             text = f"The following graphical UI widget (id: {item.id}) was displayed to the user:{widget_json}"
-            return ChatMessage(role=Role.USER, text=text)
+            return ChatMessage(role="user", text=text)
         except Exception:
             # If JSON serialization fails, skip the widget
             return None
@@ -416,7 +417,7 @@ class ThreadItemConverter:
         if not text_parts:
             return None
 
-        return ChatMessage(role=Role.ASSISTANT, text="".join(text_parts))
+        return ChatMessage(role="assistant", text="".join(text_parts))
 
     async def client_tool_call_to_input(self, item: ClientToolCallItem) -> ChatMessage | list[ChatMessage] | None:
         """Convert a ChatKit ClientToolCallItem to Agent Framework ChatMessage(s).
@@ -442,7 +443,7 @@ class ThreadItemConverter:
 
         # Create function call message
         function_call_msg = ChatMessage(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=[
                 Content.from_function_call(
                     call_id=item.call_id,
@@ -454,7 +455,7 @@ class ThreadItemConverter:
 
         # Create function result message
         function_result_msg = ChatMessage(
-            role=Role.TOOL,
+            role="tool",
             contents=[
                 Content.from_function_result(
                     call_id=item.call_id,
@@ -564,7 +565,7 @@ class ThreadItemConverter:
                 from agent_framework import ChatAgent
 
                 agent = ChatAgent(...)
-                response = await agent.run_stream(messages)
+                response = await agent.run(messages)
         """
         thread_items = list(thread_items) if isinstance(thread_items, Sequence) else [thread_items]
 

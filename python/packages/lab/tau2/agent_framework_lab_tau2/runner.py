@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import uuid
 from typing import cast
 
@@ -12,7 +14,6 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     FunctionExecutor,
-    Role,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -32,7 +33,7 @@ from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
 from ._sliding_window import SlidingWindowChatMessageStore
-from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
+from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_function_tool
 
 __all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
 
@@ -91,7 +92,7 @@ class TaskRunner:
         self.max_steps = max_steps
         self.reinit()
 
-    def reinit(self) -> "TaskRunner":
+    def reinit(self) -> TaskRunner:
         """Reset all state for a new task run."""
         self.step_count = 0
         self.full_conversation = []
@@ -179,9 +180,9 @@ class TaskRunner:
             f"Environment has {len(env.get_tools())} tools: {', '.join([tool.name for tool in env.get_tools()])}"
         )
 
-        # Convert tau2 tools to agent framework AIFunction format
+        # Convert tau2 tools to agent framework FunctionTool format
         # This bridges the gap between tau2's tool system and agent framework's expectations
-        ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools]
+        tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools]
 
         # Combines general customer service behavior with specific policy guidelines
         assistant_system_prompt = f"""<instructions>
@@ -198,7 +199,7 @@ class TaskRunner:
         return ChatAgent(
             chat_client=assistant_chat_client,
             instructions=assistant_system_prompt,
-            tools=ai_functions,
+            tools=tools,
             temperature=self.assistant_sampling_temperature,
             chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
                 system_message=assistant_system_prompt,
@@ -289,8 +290,8 @@ class TaskRunner:
         # Creates a cyclic workflow: Orchestrator -> Assistant -> Orchestrator -> User -> Orchestrator...
         # The orchestrator acts as a message router that flips roles and routes to appropriate agent
         return (
-            WorkflowBuilder(max_iterations=10000)  # Unlimited - we control termination via should_not_stop
-            .set_start_executor(orchestrator)  # Orchestrator manages the conversation flow
+            # Orchestrator manages the conversation flow
+            WorkflowBuilder(max_iterations=10000, start_executor=orchestrator)
             .add_edge(orchestrator, self._assistant_executor)  # Route messages to assistant
             .add_edge(
                 self._assistant_executor, orchestrator, condition=self.should_not_stop
@@ -339,11 +340,11 @@ class TaskRunner:
         # Matches tau2's expected conversation start pattern
         logger.info(f"Starting workflow with hardcoded greeting: '{DEFAULT_FIRST_AGENT_MESSAGE}'")
 
-        first_message = ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)
+        first_message = ChatMessage(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)
         initial_greeting = AgentExecutorResponse(
             executor_id=ASSISTANT_AGENT_ID,
             agent_response=AgentResponse(messages=[first_message]),
-            full_conversation=[ChatMessage(Role.ASSISTANT, text=DEFAULT_FIRST_AGENT_MESSAGE)],
+            full_conversation=[ChatMessage(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)],
         )
 
         # STEP 4: Execute the workflow and collect results

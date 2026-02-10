@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import Mapping, MutableMapping
@@ -53,7 +55,7 @@ class SerializationProtocol(Protocol):
             # Deserialize back to ChatMessage instance - automatic type reconstruction
             restored_msg = ChatMessage.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather like today?"
-            print(restored_msg.role.value)  # "user"
+            print(restored_msg.role)  # "user"
 
             # Verify protocol compliance (useful for type checking and validation)
             assert isinstance(user_msg, SerializationProtocol)
@@ -444,11 +446,11 @@ class SerializationMixin:
                 chat_client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
                 # Now ready to make API calls with the injected client
 
-            **Function Injection for Tools** - AIFunction runtime dependency:
+            **Function Injection for Tools** - FunctionTool runtime dependency:
 
             .. code-block:: python
 
-                from agent_framework import AIFunction
+                from agent_framework import FunctionTool
                 from typing import Annotated
 
 
@@ -458,33 +460,33 @@ class SerializationMixin:
                     return f"Current weather in {location}: 72°F and sunny"
 
 
-                # AIFunction has INJECTABLE = {"func"}
+                # FunctionTool has INJECTABLE = {"func"}
                 function_data = {
-                    "type": "ai_function",
+                    "type": "function_tool",
                     "name": "get_weather",
                     "description": "Get current weather for a location",
                     # func is excluded from serialization
                 }
 
                 # Inject the actual function implementation during deserialization
-                dependencies = {"ai_function": {"func": get_current_weather}}
+                dependencies = {"function_tool": {"func": get_current_weather}}
 
-                # Reconstruct the AIFunction with the callable injected
-                weather_func = AIFunction.from_dict(function_data, dependencies=dependencies)
+                # Reconstruct the FunctionTool with the callable injected
+                weather_func = FunctionTool.from_dict(function_data, dependencies=dependencies)
                 # The function is now callable and ready for agent use
 
-            **Middleware Context Injection** - Agent execution context:
+            **MiddlewareTypes Context Injection** - Agent execution context:
 
             .. code-block:: python
 
-                from agent_framework._middleware import AgentRunContext
+                from agent_framework._middleware import AgentContext
                 from agent_framework import BaseAgent
 
-                # AgentRunContext has INJECTABLE = {"agent", "result"}
+                # AgentContext has INJECTABLE = {"agent", "result"}
                 context_data = {
-                    "type": "agent_run_context",
+                    "type": "agent_context",
                     "messages": [{"role": "user", "text": "Hello"}],
-                    "is_streaming": False,
+                    "stream": False,
                     "metadata": {"session_id": "abc123"},
                     # agent and result are excluded from serialization
                 }
@@ -492,15 +494,15 @@ class SerializationMixin:
                 # Inject agent and result during middleware processing
                 my_agent = BaseAgent(name="test-agent")
                 dependencies = {
-                    "agent_run_context": {
+                    "agent_context": {
                         "agent": my_agent,
                         "result": None,  # Will be populated during execution
                     }
                 }
 
                 # Reconstruct context with agent dependency for middleware chain
-                context = AgentRunContext.from_dict(context_data, dependencies=dependencies)
-                # Middleware can now access context.agent and process the execution
+                context = AgentContext.from_dict(context_data, dependencies=dependencies)
+                # MiddlewareTypes can now access context.agent and process the execution
 
             This injection system allows the agent framework to maintain clean separation
             between serializable configuration and runtime dependencies like API clients,

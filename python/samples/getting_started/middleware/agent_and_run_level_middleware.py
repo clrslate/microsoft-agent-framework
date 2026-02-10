@@ -7,17 +7,18 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponse,
-    AgentRunContext,
     FunctionInvocationContext,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Agent-Level and Run-Level Middleware Example
+Agent-Level and Run-Level MiddlewareTypes Example
 
 This sample demonstrates the difference between agent-level and run-level middleware:
 
@@ -34,6 +35,8 @@ Execution order: Agent middleware (outermost) -> Run middleware (innermost) -> A
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -46,7 +49,7 @@ def get_weather(
 class SecurityAgentMiddleware(AgentMiddleware):
     """Agent-level security middleware that validates all requests."""
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
         print("[SecurityMiddleware] Checking security for all requests...")
 
         # Check for security violations in the last user message
@@ -55,22 +58,22 @@ class SecurityAgentMiddleware(AgentMiddleware):
             query = last_message.text.lower()
             if any(word in query for word in ["password", "secret", "credentials"]):
                 print("[SecurityMiddleware] Security violation detected! Blocking request.")
-                return  # Don't call next() to prevent execution
+                return  # Don't call call_next() to prevent execution
 
         print("[SecurityMiddleware] Security check passed.")
         context.metadata["security_validated"] = True
-        await next(context)
+        await call_next(context)
 
 
 async def performance_monitor_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    call_next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Agent-level performance monitoring for all runs."""
     print("[PerformanceMonitor] Starting performance monitoring...")
     start_time = time.time()
 
-    await next(context)
+    await call_next(context)
 
     end_time = time.time()
     duration = end_time - start_time
@@ -82,7 +85,7 @@ async def performance_monitor_middleware(
 class HighPriorityMiddleware(AgentMiddleware):
     """Run-level middleware for high priority requests."""
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
         print("[HighPriority] Processing high priority request with expedited handling...")
 
         # Read metadata set by agent-level middleware
@@ -93,18 +96,18 @@ class HighPriorityMiddleware(AgentMiddleware):
         context.metadata["priority"] = "high"
         context.metadata["expedited"] = True
 
-        await next(context)
+        await call_next(context)
         print("[HighPriority] High priority processing completed")
 
 
 async def debugging_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    call_next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Run-level debugging middleware for troubleshooting specific runs."""
     print("[Debug] Debug mode enabled for this run")
     print(f"[Debug] Messages count: {len(context.messages)}")
-    print(f"[Debug] Is streaming: {context.is_streaming}")
+    print(f"[Debug] Is streaming: {context.stream}")
 
     # Log existing metadata from agent middleware
     if context.metadata:
@@ -112,7 +115,7 @@ async def debugging_middleware(
 
     context.metadata["debug_enabled"] = True
 
-    await next(context)
+    await call_next(context)
 
     print("[Debug] Debug information collected")
 
@@ -123,7 +126,7 @@ class CachingMiddleware(AgentMiddleware):
     def __init__(self) -> None:
         self.cache: dict[str, AgentResponse] = {}
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
         # Create a simple cache key from the last message
         last_message = context.messages[-1] if context.messages else None
         cache_key: str = last_message.text if last_message and last_message.text else "no_message"
@@ -131,12 +134,12 @@ class CachingMiddleware(AgentMiddleware):
         if cache_key in self.cache:
             print(f"[Cache] Cache HIT for: '{cache_key[:30]}...'")
             context.result = self.cache[cache_key]  # type: ignore
-            return  # Don't call next(), return cached result
+            return  # Don't call call_next(), return cached result
 
         print(f"[Cache] Cache MISS for: '{cache_key[:30]}...'")
         context.metadata["cache_key"] = cache_key
 
-        await next(context)
+        await call_next(context)
 
         # Cache the result if we have one
         if context.result:
@@ -146,21 +149,21 @@ class CachingMiddleware(AgentMiddleware):
 
 async def function_logging_middleware(
     context: FunctionInvocationContext,
-    next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
 ) -> None:
     """Function middleware that logs all function calls."""
     function_name = context.function.name
     args = context.arguments
     print(f"[FunctionLog] Calling function: {function_name} with args: {args}")
 
-    await next(context)
+    await call_next(context)
 
     print(f"[FunctionLog] Function {function_name} completed")
 
 
 async def main() -> None:
     """Example demonstrating agent-level and run-level middleware."""
-    print("=== Agent-Level and Run-Level Middleware Example ===\n")
+    print("=== Agent-Level and Run-Level MiddlewareTypes Example ===\n")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

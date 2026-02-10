@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
@@ -10,8 +12,8 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._agents import ChatAgent
 from .._memory import ContextProvider
-from .._middleware import Middleware
-from .._tools import AIFunction, ToolProtocol
+from .._middleware import MiddlewareTypes
+from .._tools import FunctionTool, ToolProtocol
 from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
@@ -21,10 +23,13 @@ if TYPE_CHECKING:
     from ._assistants_client import OpenAIAssistantsOptions
 
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import TypeVar  # type:ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
-
+    from typing_extensions import TypeVar  # type:ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # type:ignore # pragma: no cover
+else:
+    from typing_extensions import Self, TypedDict  # type:ignore # pragma: no cover
 
 __all__ = ["OpenAIAssistantProvider"]
 
@@ -174,7 +179,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
 
             self._client = AsyncOpenAI(**client_args)
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 
@@ -201,9 +206,9 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         tools: _ToolsType | None = None,
         metadata: dict[str, str] | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a new assistant on OpenAI and return a ChatAgent.
 
         This method creates a new assistant on the OpenAI service and wraps it
@@ -215,7 +220,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             instructions: System instructions for the assistant.
             description: A description of the assistant.
             tools: Tools available to the assistant. Can include:
-                - AIFunction instances or callables decorated with @ai_function
+                - FunctionTool instances or callables decorated with @tool
                 - HostedCodeInterpreterTool for code execution
                 - HostedFileSearchTool for vector store search
                 - Raw tool dictionaries
@@ -223,7 +228,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
                 Include ``response_format`` here for structured output responses.
-            middleware: Middleware for the ChatAgent.
+            middleware: MiddlewareTypes for the ChatAgent.
             context_provider: Context provider for the ChatAgent.
 
         Returns:
@@ -309,9 +314,9 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         tools: _ToolsType | None = None,
         instructions: str | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Retrieve an existing assistant by ID and return a ChatAgent.
 
         This method fetches an existing assistant from OpenAI by its ID
@@ -328,7 +333,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             instructions: Override the assistant's instructions (optional).
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
-            middleware: Middleware for the ChatAgent.
+            middleware: MiddlewareTypes for the ChatAgent.
             context_provider: Context provider for the ChatAgent.
 
         Returns:
@@ -375,9 +380,9 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         tools: _ToolsType | None = None,
         instructions: str | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Wrap an existing SDK Assistant object as a ChatAgent.
 
         This method does NOT make any HTTP calls. It simply wraps an already-
@@ -393,7 +398,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             instructions: Override the assistant's instructions (optional).
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
-            middleware: Middleware for the ChatAgent.
+            middleware: MiddlewareTypes for the ChatAgent.
             context_provider: Context provider for the ChatAgent.
 
         Returns:
@@ -467,7 +472,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         if provided_tools is not None:
             normalized = normalize_tools(provided_tools)
             for tool in normalized:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     provided_functions.add(tool.name)
                 elif isinstance(tool, MutableMapping) and "function" in tool:
                     func_spec = tool.get("function", {})
@@ -517,18 +522,18 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         assistant: Assistant,
         tools: list[ToolProtocol | MutableMapping[str, Any]] | None,
         instructions: str | None,
-        middleware: Sequence[Middleware] | None,
+        middleware: Sequence[MiddlewareTypes] | None,
         context_provider: ContextProvider | None,
         default_options: TOptions_co | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a ChatAgent from an Assistant.
 
         Args:
             assistant: The OpenAI Assistant object.
             tools: Tools for the agent.
             instructions: Instructions override.
-            middleware: Middleware for the agent.
+            middleware: MiddlewareTypes for the agent.
             context_provider: Context provider for the agent.
             default_options: Default chat options for the agent (may include response_format).
             **kwargs: Additional arguments passed to ChatAgent.
