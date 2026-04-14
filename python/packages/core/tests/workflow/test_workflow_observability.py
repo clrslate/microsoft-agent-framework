@@ -109,7 +109,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             {
                 "id": "test-workflow-123",
                 "max_iterations": 100,
-                "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',
+                "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',  # pyright: ignore[reportUnknownLambdaType]
             },
         )(),
     )
@@ -122,7 +122,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
         },
     ) as workflow_span:
         workflow_span.add_event(OtelAttr.WORKFLOW_STARTED)
-        sending_attributes = {
+        sending_attributes: dict[str, str | int] = {
             OtelAttr.MESSAGE_TYPE: "ResponseMessage",
             OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",
         }
@@ -231,7 +231,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_trace_context_disabled_when_tracing_disabled(
-    enable_instrumentation, span_exporter: InMemorySpanExporter
+    enable_instrumentation: bool, span_exporter: InMemorySpanExporter
 ) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
@@ -306,14 +306,14 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     assert len(build_spans_with_metadata) == 1
     metadata_build_span = build_spans_with_metadata[0]
     assert metadata_build_span.attributes is not None
-    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_NAME) == "Test Pipeline"
-    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_DESCRIPTION) == "Test workflow description"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_BUILDER_NAME) == "Test Pipeline"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_BUILDER_DESCRIPTION) == "Test workflow description"
 
     # Clear spans to separate build from run tracing
     span_exporter.clear()
 
     # Run workflow (this should create run spans)
-    events = []
+    events: list[Any] = []
     async for event in workflow.run("test input", stream=True):
         events.append(event)
 
@@ -451,14 +451,14 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     await ctx.send_message(message)
 
     # Create a checkpoint that includes the message
-    checkpoint_id = await ctx.create_checkpoint(State(), 0)
+    checkpoint_id = await ctx.create_checkpoint("test_name", "test_hash", State(), None, 0)
     checkpoint = await ctx.load_checkpoint(checkpoint_id)
     assert checkpoint is not None
 
     # Check serialized message includes trace context
     serialized_msg = checkpoint.messages["source"][0]
-    assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
-    assert serialized_msg["source_span_ids"] == ["span123"]
+    assert serialized_msg.trace_contexts == [{"traceparent": "00-trace-span-01"}]
+    assert serialized_msg.source_span_ids == ["span123"]
 
     # Test deserialization
     await ctx.apply_checkpoint(checkpoint)

@@ -1,18 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable
-from typing import Any
+from typing import Any, Literal, overload
 
 import pytest
 from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentRunInputs,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
     Message,
+    ResponseStream,
     TypeCompatibilityError,
     WorkflowContext,
     WorkflowRunState,
@@ -25,25 +27,44 @@ from agent_framework.orchestrations import SequentialBuilder
 class _EchoAgent(BaseAgent):
     """Simple agent that appends a single assistant message with its name."""
 
-    def run(  # type: ignore[override]
+    @overload
+    def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
-            return self._run_stream()
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} reply")])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
             return AgentResponse(messages=[Message("assistant", [f"{self.name} reply"])])
 
         return _run()
-
-    async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        # Minimal async generator with one assistant update
-        yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} reply")])
 
 
 class _SummarizerExec(Executor):
@@ -146,14 +167,10 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
-
-    resume_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
-    )
+    resume_checkpoint = checkpoints[0]
 
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents), checkpoint_storage=storage).build()
@@ -189,14 +206,10 @@ async def test_sequential_checkpoint_runtime_only() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
-
-    resume_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
-    )
+    resume_checkpoint = checkpoints[0]
 
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents)).build()
@@ -240,8 +253,8 @@ async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert baseline_output is not None
 
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=wf.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=wf.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -259,3 +272,121 @@ async def test_sequential_builder_reusable_after_build_with_participants() -> No
 
     assert builder._participants[0] is a1  # type: ignore
     assert builder._participants[1] is a2  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# chain_only_agent_responses tests
+# ---------------------------------------------------------------------------
+
+
+class _CapturingAgent(BaseAgent):
+    """Agent that records the messages it received and returns a configurable reply."""
+
+    def __init__(self, *, reply_text: str = "reply", **kwargs: Any):
+        super().__init__(**kwargs)
+        self.reply_text = reply_text
+        self.last_messages: list[Message] = []
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        captured: list[Message] = []
+        if messages:
+            for m in messages:  # type: ignore[union-attr]
+                if isinstance(m, Message):
+                    captured.append(m)
+                elif isinstance(m, str):
+                    captured.append(Message("user", [m]))
+        self.last_messages = captured
+
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=self.reply_text)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", [self.reply_text])])
+
+        return _run()
+
+
+async def test_chain_only_agent_responses_false_passes_full_conversation() -> None:
+    """Default (chain_only_agent_responses=False) passes full conversation to the second agent."""
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+
+    wf = SequentialBuilder(participants=[a1, a2], chain_only_agent_responses=False).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    # Second agent should see full conversation: [user("hello"), assistant("A1 reply")]
+    seen = a2.last_messages
+    assert len(seen) == 2
+    assert seen[0].role == "user" and "hello" in (seen[0].text or "")
+    assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")
+
+
+async def test_chain_only_agent_responses_true_passes_only_agent_messages() -> None:
+    """chain_only_agent_responses=True passes only the previous agent's response messages."""
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+
+    wf = SequentialBuilder(participants=[a1, a2], chain_only_agent_responses=True).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    # Second agent should see only the assistant message: [assistant("A1 reply")]
+    seen = a2.last_messages
+    assert len(seen) == 1
+    assert seen[0].role == "assistant" and "A1 reply" in (seen[0].text or "")
+
+
+async def test_chain_only_agent_responses_three_agents() -> None:
+    """chain_only_agent_responses=True with three agents: each sees only the prior agent's reply."""
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+    a3 = _CapturingAgent(id="agent3", name="A3", reply_text="A3 reply")
+
+    wf = SequentialBuilder(participants=[a1, a2, a3], chain_only_agent_responses=True).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    # a2 should see only A1's reply
+    assert len(a2.last_messages) == 1
+    assert a2.last_messages[0].role == "assistant" and "A1 reply" in (a2.last_messages[0].text or "")
+
+    # a3 should see only A2's reply
+    assert len(a3.last_messages) == 1
+    assert a3.last_messages[0].role == "assistant" and "A2 reply" in (a3.last_messages[0].text or "")

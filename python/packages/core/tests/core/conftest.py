@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any, Generic
 from unittest.mock import patch
@@ -10,10 +11,16 @@ from uuid import uuid4
 
 from pytest import fixture
 
-from agent_framework import (
+warnings.filterwarnings(
+    "ignore",
+    message=r"\[SKILLS\].*",
+    category=FutureWarning,
+)
+
+from agent_framework import (  # noqa: E402
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -26,8 +33,8 @@ from agent_framework import (
     SupportsAgentRun,
     tool,
 )
-from agent_framework._clients import OptionsCoT
-from agent_framework.observability import ChatTelemetryLayer
+from agent_framework._clients import OptionsCoT  # noqa: E402
+from agent_framework.observability import ChatTelemetryLayer  # noqa: E402
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -98,7 +105,7 @@ class MockChatClient:
             self.call_count += 1
             if self.responses:
                 return self.responses.pop(0)
-            return ChatResponse(messages=Message(role="assistant", text="test response"))
+            return ChatResponse(messages=Message(role="assistant", contents=["test response"]))
 
         return _get()
 
@@ -120,16 +127,14 @@ class MockChatClient:
                 yield ChatResponseUpdate(contents=[Content.from_text("another update")], role="assistant")
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-            response_format = options.get("response_format")
-            output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
 
 class MockBaseChatClient(
-    ChatMiddlewareLayer[OptionsCoT],
     FunctionInvocationLayer[OptionsCoT],
+    ChatMiddlewareLayer[OptionsCoT],
     ChatTelemetryLayer[OptionsCoT],
     BaseChatClient[OptionsCoT],
     Generic[OptionsCoT],
@@ -137,7 +142,7 @@ class MockBaseChatClient(
     """Mock implementation of a full-featured ChatClient."""
 
     def __init__(self, **kwargs: Any):
-        super().__init__(function_middleware=[], **kwargs)
+        super().__init__(middleware=[], **kwargs)
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0
@@ -181,7 +186,7 @@ class MockBaseChatClient(
         logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=Message(role="assistant", text=f"test response - {messages[-1].text}"))
+            return ChatResponse(messages=Message(role="assistant", contents=[f"test response - {messages[-1].text}"]))
 
         response = self.run_responses.pop(0)
 
@@ -189,7 +194,7 @@ class MockBaseChatClient(
             return ChatResponse(
                 messages=Message(
                     role="assistant",
-                    text="I broke out of the function invocation loop...",
+                    contents=["I broke out of the function invocation loop..."],
                 ),
                 conversation_id=response.conversation_id,
             )
@@ -226,9 +231,7 @@ class MockBaseChatClient(
             await asyncio.sleep(0)
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-            response_format = options.get("response_format")
-            output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
@@ -261,7 +264,7 @@ def chat_client_base(enable_function_calling: bool, max_iterations: int) -> Mock
 
 
 # region Agents
-class MockAgentThread(AgentThread):
+class MockAgentSession(AgentSession):
     pass
 
 
@@ -284,41 +287,41 @@ class MockAgent(SupportsAgentRun):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
-            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
-        return self._run_impl(messages=messages, thread=thread, **kwargs)
+            return self._run_stream_impl(messages=messages, session=session, **kwargs)
+        return self._run_impl(messages=messages, session=session, **kwargs)
 
     async def _run_impl(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
+        logger.debug(f"Running mock agent, with: {messages=}, {session=}, {kwargs=}")
         return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Response")])])
 
     async def _run_stream_impl(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        logger.debug(f"Running mock agent stream, with: {messages=}, {thread=}, {kwargs=}")
+        logger.debug(f"Running mock agent stream, with: {messages=}, {session=}, {kwargs=}")
         yield AgentResponseUpdate(contents=[Content.from_text("Response")])
 
-    def get_new_thread(self) -> AgentThread:
-        return MockAgentThread()
+    def create_session(self) -> AgentSession:
+        return MockAgentSession()
 
 
 @fixture
-def agent_thread() -> AgentThread:
-    return MockAgentThread()
+def agent_session() -> AgentSession:
+    return MockAgentSession()
 
 
 @fixture

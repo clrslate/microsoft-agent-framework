@@ -20,7 +20,7 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     BaseChatClient,
     ChatResponse,
@@ -162,19 +162,19 @@ class MockAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         self.call_count += 1
@@ -184,7 +184,7 @@ class MockAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
@@ -208,19 +208,19 @@ class MockToolCallingAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         return AgentResponse(messages=[Message("assistant", ["done"])])
@@ -229,7 +229,7 @@ class MockToolCallingAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         async def _iter() -> AsyncIterable[AgentResponseUpdate]:
@@ -413,8 +413,8 @@ def executor_failed_event() -> WorkflowEvent[WorkflowErrorDetails]:
 def test_entities_dir() -> str:
     """Use the samples directory which has proper entity structure."""
     current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "getting_started" / "devui"
+    # Navigate to python/samples/02-agents/devui
+    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "02-agents" / "devui"
     return str(samples_dir.resolve())
 
 
@@ -446,7 +446,7 @@ async def executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockB
         name="Test Chat Agent",
         description="A real Agent for testing execution flow",
         client=mock_client,
-        system_message="You are a helpful test assistant.",
+        instructions="You are a helpful test assistant.",
     )
 
     # Register the real agent
@@ -478,14 +478,14 @@ async def sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         name="Writer",
         description="Content writer agent",
         client=mock_client,
-        system_message="You are a content writer. Create clear, engaging content.",
+        instructions="You are a content writer. Create clear, engaging content.",
     )
     reviewer = Agent(
         id="reviewer",
         name="Reviewer",
         description="Content reviewer agent",
         client=mock_client,
-        system_message="You are a reviewer. Provide constructive feedback.",
+        instructions="You are a reviewer. Provide constructive feedback.",
     )
 
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
@@ -523,21 +523,21 @@ async def concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         name="Researcher",
         description="Research agent",
         client=mock_client,
-        system_message="You are a researcher. Find key data and insights.",
+        instructions="You are a researcher. Find key data and insights.",
     )
     analyst = Agent(
         id="analyst",
         name="Analyst",
         description="Analysis agent",
         client=mock_client,
-        system_message="You are an analyst. Identify trends and patterns.",
+        instructions="You are an analyst. Identify trends and patterns.",
     )
     summarizer = Agent(
         id="summarizer",
         name="Summarizer",
         description="Summary agent",
         client=mock_client,
-        system_message="You are a summarizer. Provide concise summaries.",
+        instructions="You are a summarizer. Provide concise summaries.",
     )
 
     workflow = ConcurrentBuilder(participants=[researcher, analyst, summarizer]).build()

@@ -7,5 +7,6 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal sealed record class HandoffState(
     TurnToken TurnToken,
-    string? InvokedHandoff,
-    List<ChatMessage> Messages);
+    string? RequestedHandoffTargetAgentId,
+    List<ChatMessage> Messages,
+    string? PreviousAgentId = null);

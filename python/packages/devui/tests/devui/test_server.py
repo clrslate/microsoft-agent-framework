@@ -151,7 +151,7 @@ async def test_credential_cleanup() -> None:
     # Create mock chat client with credential
     mock_client = Mock()
     mock_client.async_credential = mock_credential
-    mock_client.model_id = "test-model"
+    mock_client.model = "test-model"
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
@@ -184,7 +184,7 @@ async def test_credential_cleanup_error_handling() -> None:
     # Create mock chat client with credential
     mock_client = Mock()
     mock_client.async_credential = mock_credential
-    mock_client.model_id = "test-model"
+    mock_client.model = "test-model"
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
@@ -219,7 +219,7 @@ async def test_multiple_credential_attributes() -> None:
     mock_client = Mock()
     mock_client.credential = mock_cred1
     mock_client.async_credential = mock_cred2
-    mock_client.model_id = "test-model"
+    mock_client.model = "test-model"
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
@@ -379,26 +379,27 @@ async def test_checkpoint_api_endpoints(test_entities_dir):
     storage = executor.checkpoint_manager.get_checkpoint_storage(conv_id)
     checkpoint = WorkflowCheckpoint(
         checkpoint_id="test_checkpoint_1",
-        workflow_id="test_workflow",
+        workflow_name="test_workflow",
+        graph_signature_hash="test_graph_hash",
         state={"key": "value"},
         iteration_count=1,
     )
-    await storage.save_checkpoint(checkpoint)
+    await storage.save(checkpoint)
 
     # Test list checkpoints endpoint
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name="test_workflow")
     assert len(checkpoints) == 1
     assert checkpoints[0].checkpoint_id == "test_checkpoint_1"
-    assert checkpoints[0].workflow_id == "test_workflow"
+    assert checkpoints[0].workflow_name == "test_workflow"
 
     # Test delete checkpoint endpoint
-    deleted = await storage.delete_checkpoint("test_checkpoint_1")
+    deleted = await storage.delete("test_checkpoint_1")
     assert deleted is True
 
     # Verify checkpoint was deleted
-    remaining = await storage.list_checkpoints()
+    remaining = await storage.list_checkpoints(workflow_name="test_workflow")
     assert len(remaining) == 0
 
     # Test delete non-existent checkpoint
-    deleted = await storage.delete_checkpoint("nonexistent")
+    deleted = await storage.delete("nonexistent")
     assert deleted is False

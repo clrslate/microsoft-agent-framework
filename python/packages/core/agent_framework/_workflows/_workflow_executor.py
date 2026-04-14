@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-from ._const import WORKFLOW_RUN_KWARGS_KEY
+from ._checkpoint_encoding import decode_checkpoint_value
+from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
@@ -385,10 +385,30 @@ class WorkflowExecutor(Executor):
 
         try:
             # Get kwargs from parent workflow's State to propagate to subworkflow
-            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {}
+            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+
+            # Extract invocation kwargs recognised by Workflow.run()
+            # The state stores resolved format (with __global__ wrapper for global kwargs).
+            # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
+            # against the subworkflow's own executor IDs.
+            fi_kwargs: dict[str, Any] | None = None
+            ci_kwargs: dict[str, Any] | None = None
+            for key in ("function_invocation_kwargs", "client_kwargs"):
+                resolved = parent_kwargs.get(key)
+                if isinstance(resolved, dict):
+                    # Unwrap global sentinel; pass per-executor dicts as-is
+                    unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
+                    if key == "function_invocation_kwargs":
+                        fi_kwargs = unwrapped  # type: ignore
+                    else:
+                        ci_kwargs = unwrapped  # type: ignore
 
             # Run the sub-workflow and collect all events, passing parent kwargs
-            result = await self.workflow.run(input_data, **parent_kwargs)
+            result = await self.workflow.run(
+                input_data,
+                function_invocation_kwargs=fi_kwargs,  # type: ignore
+                client_kwargs=ci_kwargs,  # type: ignore
+            )
 
             logger.debug(
                 f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} "
@@ -454,8 +474,7 @@ class WorkflowExecutor(Executor):
         """Get the current state of the WorkflowExecutor for checkpointing purposes."""
         return {
             "execution_contexts": {
-                execution_id: encode_checkpoint_value(execution_context)
-                for execution_id, execution_context in self._execution_contexts.items()
+                execution_id: execution_context for execution_id, execution_context in self._execution_contexts.items()
             },
             "request_to_execution": dict(self._request_to_execution),
         }
@@ -654,21 +673,6 @@ class WorkflowExecutor(Executor):
         try:
             # Resume the sub-workflow with all collected responses
             result = await self.workflow.run(responses=responses_to_send)
-            # Remove handled requests from result. The result may contain the original
-            # RequestInfoEvents that were already handled. This is due to checkpointing
-            # and rehydration of the workflow that re-adds the RequestInfoEvents to the
-            # workflow's _runner_context thus the event queue. When the workflow is resumed,
-            # those events will be emitted at the very beginning of the superstep, prior to
-            # processing messages/responses, creating the illusion that the workflow is
-            # requesting the same information again.
-            for request_id in responses_to_send:
-                event_to_remove = next(
-                    (event for event in result if event.type == "request_info" and event.request_id == request_id),
-                    None,
-                )
-                if event_to_remove:
-                    result.remove(event_to_remove)
-
             # Process the workflow result using shared logic
             await self._process_workflow_result(result, execution_context, ctx)
         finally:

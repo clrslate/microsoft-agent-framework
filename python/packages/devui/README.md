@@ -69,11 +69,11 @@ Register cleanup hooks to properly close credentials and resources on shutdown:
 ```python
 from azure.identity.aio import DefaultAzureCredential
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework_devui import register_cleanup, serve
 
 credential = DefaultAzureCredential()
-client = AzureOpenAIChatClient()
+client = OpenAIChatCompletionClient()
 agent = Agent(name="MyAgent", client=client)
 
 # Register cleanup hook - credential will be closed on shutdown
@@ -373,7 +373,7 @@ This restricts developer APIs (reload, deployment, entity details) and requires 
 
 ## Examples
 
-See working implementations in `python/samples/getting_started/devui/`
+See working implementations in `python/samples/02-agents/devui/`
 
 ## License
 

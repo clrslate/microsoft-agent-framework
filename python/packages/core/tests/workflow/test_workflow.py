@@ -4,7 +4,7 @@ import asyncio
 import tempfile
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
 import pytest
@@ -13,7 +13,8 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentRunInputs,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
@@ -335,12 +336,9 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(
         )
 
         # Attempt to run from non-existent checkpoint should fail
-        try:
+        with pytest.raises(WorkflowCheckpointException, match="No checkpoint found with ID nonexistent_checkpoint_id"):
             async for _ in workflow.run(checkpoint_id="nonexistent_checkpoint_id", stream=True):
                 pass
-            raise AssertionError("Expected WorkflowCheckpointException to be raised")
-        except WorkflowCheckpointException as e:
-            assert str(e) == "Checkpoint nonexistent_checkpoint_id not found"
 
 
 async def test_workflow_run_stream_from_checkpoint_with_external_storage(
@@ -354,12 +352,14 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name="test-workflow",
+            graph_signature_hash="test-graph-signature",
+            previous_checkpoint_id=None,
             messages={},
             state={},
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Create a workflow WITHOUT checkpointing
         workflow_without_checkpointing = (
@@ -385,23 +385,25 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        # Create a test checkpoint manually in storage
-        from agent_framework import WorkflowCheckpoint
-
-        test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
-            messages={},
-            state={},
-            iteration_count=0,
-        )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
-
         # Build workflow with checkpointing
         workflow = (
             WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)
             .build()
         )
+
+        # Create a test checkpoint manually in storage
+        from agent_framework import WorkflowCheckpoint
+
+        test_checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow.name,
+            graph_signature_hash=workflow.graph_signature_hash,
+            previous_checkpoint_id=None,
+            messages={},
+            state={},
+            iteration_count=0,
+        )
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Test non-streaming run method with checkpoint_id
         result = await workflow.run(checkpoint_id=checkpoint_id)
@@ -416,11 +418,19 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
+            .add_edge(simple_executor, simple_executor)
+            .build()
+        )
+
         # Create a test checkpoint manually in storage
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name=workflow.name,
+            graph_signature_hash=workflow.graph_signature_hash,
             messages={},
             state={},
             pending_request_info_events={
@@ -429,18 +439,11 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
                     source_executor_id=simple_executor.id,
                     request_data="Mock",
                     response_type=str,
-                ).to_dict(),
+                ),
             },
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
-
-        # Build workflow with checkpointing
-        workflow = (
-            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
-            .add_edge(simple_executor, simple_executor)
-            .build()
-        )
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Resume from checkpoint - pending request events should be emitted
         events: list[WorkflowEvent] = []
@@ -472,7 +475,7 @@ class StateTrackingExecutor(Executor):
     ) -> None:
         """Handle the message and track it in workflow state."""
         # Get existing messages from workflow state
-        existing_messages = ctx.get_state("processed_messages") or []
+        existing_messages: list[str] = ctx.get_state("processed_messages") or []
 
         # Record this message
         message_record = f"{message.run_id}:{message.data}"
@@ -542,7 +545,7 @@ async def test_workflow_checkpoint_runtime_only_configuration(
         assert result.get_final_state() == WorkflowRunState.IDLE
 
         # Verify checkpoints were created
-        checkpoints = await storage.list_checkpoints()
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         assert len(checkpoints) > 0
 
         # Find a superstep checkpoint to resume from
@@ -592,8 +595,8 @@ async def test_workflow_checkpoint_runtime_overrides_buildtime(
         assert result is not None
 
         # Verify checkpoints were created in runtime storage, not build-time storage
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=workflow.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=workflow.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -831,12 +834,32 @@ class _StreamingTestAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
+    @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         if stream:
@@ -881,8 +904,10 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         stream_events.append(event)
 
     # Filter for agent events
-    agent_response = [
-        cast(AgentResponse, e.data) for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponse)
+    agent_response: list[AgentResponse[Any]] = [
+        cast(AgentResponse[Any], e.data)  # pyright: ignore[reportUnknownMemberType]
+        for e in stream_events
+        if e.type == "output" and isinstance(e.data, AgentResponse)
     ]
     agent_response_updates = [
         e.data for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponseUpdate)

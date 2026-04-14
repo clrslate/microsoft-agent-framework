@@ -12,8 +12,8 @@ agent_framework/
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
 ├── _middleware.py       # Middleware system for request/response interception
-├── _threads.py          # AgentThread and message store abstractions
-├── _memory.py           # Context providers for memory/RAG
+├── _sessions.py         # AgentSession and context provider abstractions
+├── _skills.py           # Agent Skills system (models, executors, provider)
 ├── _mcp.py              # Model Context Protocol support
 ├── _workflows/          # Workflow orchestration (sequential, concurrent, handoff, etc.)
 ├── openai/              # Built-in OpenAI client
@@ -57,16 +57,20 @@ agent_framework/
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
 - **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware
 
-### Threads (`_threads.py`)
+### Sessions (`_sessions.py`)
 
-- **`AgentThread`** - Manages conversation history for an agent
-- **`ChatMessageStoreProtocol`** - Protocol for persistent message storage
-- **`ChatMessageStore`** - Default in-memory implementation
+- **`AgentSession`** - Manages conversation state and session metadata
+- **`SessionContext`** - Context object for session-scoped data during agent runs
+- **`ContextProvider`** - Base class for context providers (RAG, memory systems)
+- **`HistoryProvider`** - Base class for conversation history storage
 
-### Memory (`_memory.py`)
+### Skills (`_skills.py`)
 
-- **`ContextProvider`** - Protocol for providing additional context to agents (RAG, memory systems)
-- **`Context`** - Container for context data
+- **`Skill`** - A skill definition bundling instructions (`content`) with metadata, resources, and scripts. Supports `@skill.resource` and `@skill.script` decorators for adding components.
+- **`SkillResource`** - Named supplementary content attached to a skill; holds either static `content` or a dynamic `function` (sync or async). Exactly one must be provided.
+- **`SkillScript`** - An executable script attached to a skill; holds either an inline `function` (code-defined, runs in-process) or a `path` to a file on disk (file-based, delegated to a runner). Exactly one must be provided.
+- **`SkillScriptRunner`** - Protocol for file-based script execution. Any callable matching `(skill, script, args) -> Any` satisfies it. Code-defined scripts do not use a runner.
+- **`SkillsProvider`** - Context provider (extends `ContextProvider`) that discovers file-based skills from `SKILL.md` files and/or accepts code-defined `Skill` instances. Follows progressive disclosure: advertise → load → read resources / run scripts.
 
 ### Workflows (`_workflows/`)
 
@@ -78,13 +82,12 @@ agent_framework/
 
 ### OpenAI (`openai/`)
 
-- **`OpenAIChatClient`** - Chat client for OpenAI API
-- **`OpenAIResponsesClient`** - Client for OpenAI Responses API
+- **`OpenAIChatClient`** - Chat client for the OpenAI Responses API
+- **`OpenAIChatCompletionClient`** - Chat client for the OpenAI Chat Completions API
 
-### Azure OpenAI (`azure/`)
+### Foundry (`foundry/`)
 
-- **`AzureOpenAIChatClient`** - Chat client for Azure OpenAI
-- **`AzureOpenAIResponsesClient`** - Client for Azure OpenAI Responses API
+- **`FoundryChatClient`** - Chat client for Azure AI Foundry project endpoints
 
 ## Key Patterns
 
@@ -119,7 +122,7 @@ from agent_framework import Agent, AgentMiddleware, AgentContext
 class LoggingMiddleware(AgentMiddleware):
     async def process(self, context: AgentContext, call_next) -> None:
         print(f"Input: {context.messages}")
-        await call_next(context)
+        await call_next()
         print(f"Output: {context.result}")
 
 agent = Agent(..., middleware=[LoggingMiddleware()])
@@ -133,7 +136,7 @@ from agent_framework import BaseChatClient, ChatResponse, Message
 class MyClient(BaseChatClient):
     async def _inner_get_response(self, *, messages, options, **kwargs) -> ChatResponse:
         # Call your LLM here
-        return ChatResponse(messages=[Message(role="assistant", text="Hi!")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Hi!"])])
 
     async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
         yield ChatResponseUpdate(...)
