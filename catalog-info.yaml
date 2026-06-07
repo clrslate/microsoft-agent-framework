@@ -1,0 +1,8 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: microsoft-agent-framework
+spec:
+  type: repository
+  owner: group:default/platform
+  lifecycle: experimental
