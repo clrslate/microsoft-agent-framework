@@ -2,7 +2,15 @@ apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
   name: microsoft-agent-framework
+  title: Microsoft Agent Framework Reference
+  description: Upstream Microsoft Agent Framework reference source used to compare legacy ClrSlate customizations and modern framework capabilities.
+  annotations:
+    github.com/project-slug: clrslate/microsoft-agent-framework
+    backstage.io/source-location: url:https://github.com/clrslate/microsoft-agent-framework/blob/main/catalog-info.yaml
+    clrslate.io/planning-note-id: nt-935525e3
+  tags: [legacy, reference, agent]
 spec:
-  type: repository
+  type: library
   owner: group:default/platform
-  lifecycle: experimental
+  lifecycle: deprecated
+  system: legacy-agent-builder
